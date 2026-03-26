@@ -1,0 +1,110 @@
+apiVersion: 1
+
+# ─── Contact points ───────────────────────────────────────────────────────────
+# Configurer le webhook ou l'email selon l'environnement cible.
+# En l'état, les alertes sont visibles dans l'interface Grafana.
+contactPoints:
+  - orgId: 1
+    name: default
+    receivers:
+      - uid: default-receiver
+        type: email
+        settings:
+          addresses: alerts@example.com
+        disableResolveMessage: false
+
+# ─── Notification policy ─────────────────────────────────────────────────────
+policies:
+  - orgId: 1
+    receiver: default
+    group_by: [alertname, severity]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+# ─── Alert rules ─────────────────────────────────────────────────────────────
+groups:
+  - orgId: 1
+    name: Security
+    folder: Mini Secrets Manager
+    interval: 1m
+    rules:
+      # Brute force détecté : plus de 20 échecs d'auth en 5 minutes
+      - uid: alert-auth-failures
+        title: High Authentication Failure Rate
+        condition: threshold
+        data:
+          - refId: query
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: increase(auth_failures_total[5m])
+              instant: true
+              refId: query
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              refId: threshold
+              expression: query
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [20]
+                  operator:
+                    type: and
+                  query:
+                    params: [query]
+                  reducer:
+                    type: last
+        noDataState: NoData
+        execErrState: Error
+        for: 2m
+        annotations:
+          summary: "Possible brute force attack"
+          description: "{{ $value | printf \"%.0f\" }} authentication failures in the last 5 minutes."
+        labels:
+          severity: warning
+        isPaused: false
+
+      # Latence dégradée : p99 > 2s sur les 5 dernières minutes
+      - uid: alert-high-latency
+        title: High API Latency (p99 > 2s)
+        condition: threshold
+        data:
+          - refId: query
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))
+              instant: true
+              refId: query
+          - refId: threshold
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              refId: threshold
+              expression: query
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+                  operator:
+                    type: and
+                  query:
+                    params: [query]
+                  reducer:
+                    type: last
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "API p99 latency above 2s"
+          description: "p99 latency is {{ $value | printf \"%.2f\" }}s over the last 5 minutes."
+        labels:
+          severity: warning
+        isPaused: false
