@@ -1,0 +1,284 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '22'
+  IMAGE_NAME: mini-secrets-manager
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chaîne Shift-Left :
+#
+#  sast ──┐
+#  secrets-scan ──┤
+#  sca ──┤──→ docker-build-scan → push-ecr → deploy-staging → dast → deploy-prod
+#  test ──┘
+#
+# Chaque outil bloque le pipeline en cas de vulnérabilité critique (exit 1).
+# Anti-pattern à éviter : `commande || true` — ne jamais masquer une erreur.
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # SAST — Semgrep : vulnérabilités au niveau code
+  # Exit 1 automatique si une règle auto détecte un problème.
+  # ───────────────────────────────────────────────────────────────────────────
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Secrets Scan — Trufflehog : secrets hardcodés dans les commits
+  # --fail : exit 1 dès qu'un secret est détecté dans l'historique.
+  # fetch-depth: 0 obligatoire pour scanner tous les commits du push.
+  # ───────────────────────────────────────────────────────────────────────────
+  secrets-scan:
+    name: Secrets Scan (Trufflehog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan commits for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          # base vide sur premier push (0000...000) → Trufflehog scanne HEAD uniquement
+          base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
+          head: ${{ github.sha }}
+          extra_args: --fail
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # SCA — Snyk : vulnérabilités dans les dépendances npm
+  # --severity-threshold=critical : bloque uniquement sur les CVE critiques.
+  # ───────────────────────────────────────────────────────────────────────────
+  sca:
+    name: SCA (Snyk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: HUSKY=0 npm ci
+
+      - name: Snyk dependency scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=critical
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Tests — Jest
+  # Lancés en parallèle des scans de sécurité pour ne pas allonger le pipeline.
+  # ───────────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests (Jest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: HUSKY=0 npm ci
+
+      - name: Run unit tests
+        run: npm test -- --no-coverage
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Build Docker + Container Scan — Trivy
+  # Ce job ne démarre qu'après que TOUS les jobs précédents passent.
+  # --exit-code 1 --severity CRITICAL : bloque sur CVE critique dans l'image.
+  # Cache GitHub Actions (type=gha) : évite de reconstruire chaque layer inutilement.
+  # ───────────────────────────────────────────────────────────────────────────
+  docker-build-scan:
+    name: Docker Build + Trivy Scan
+    runs-on: ubuntu-latest
+    needs: [sast, secrets-scan, sca, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy — scan container
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Push vers AWS ECR
+  # Déclenché uniquement sur push main (pas sur les PR).
+  # Rebuild avec cache — le layer digest est identique si rien n'a changé.
+  # ───────────────────────────────────────────────────────────────────────────
+  push-ecr:
+    name: Push to ECR
+    runs-on: ubuntu-latest
+    needs: docker-build-scan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    outputs:
+      registry: ${{ steps.login-ecr.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push to ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Deploy Staging (EC2)
+  # Les secrets applicatifs sont injectés via GitHub Secrets — jamais dans le code.
+  # `docker stop || true` : toléré ici car c'est un "stop si existant", pas un scan.
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: push-ecr
+    environment: staging
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy on staging EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_STAGING_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+              docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
+            docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            docker stop mini-secrets-manager || true
+            docker rm   mini-secrets-manager || true
+            docker run -d \
+              --name mini-secrets-manager \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+              -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+              -e JWT_EXPIRES_IN="15m" \
+              -e NODE_ENV="production" \
+              ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # DAST — OWASP ZAP : vulnérabilités au niveau runtime (contre staging)
+  # full-scan : teste les endpoints actifs, les headers de sécurité, etc.
+  # Le job échoue automatiquement si des alertes HIGH sont trouvées.
+  # ───────────────────────────────────────────────────────────────────────────
+  dast:
+    name: DAST (OWASP ZAP)
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZAP Full Scan against staging
+        uses: zaproxy/action-full-scan@v0.12.0
+        with:
+          target: http://${{ secrets.EC2_STAGING_HOST }}:3000
+          cmd_options: '-a'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Deploy Production (EC2)
+  # Déclenché uniquement si le DAST passe — jamais de déploiement prod sans scan.
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [dast, push-ecr]
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy on prod EC2
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_PROD_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+              docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
+            docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            docker stop mini-secrets-manager || true
+            docker rm   mini-secrets-manager || true
+            docker run -d \
+              --name mini-secrets-manager \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+              -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+              -e JWT_EXPIRES_IN="15m" \
+              -e NODE_ENV="production" \
+              ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}

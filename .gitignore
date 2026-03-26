@@ -1,0 +1,24 @@
+# Dépendances
+node_modules/
+
+# Variables d'environnement — NE JAMAIS COMMITTER
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+/generated/
+
+# Prisma — les migrations DOIVENT être committées (prisma migrate deploy en prod)
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

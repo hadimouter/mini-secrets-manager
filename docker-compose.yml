@@ -1,0 +1,58 @@
+# Docker Compose — environnement de développement local
+#
+# Services :
+#   postgres  → PostgreSQL 16 local (remplace Neon en dev)
+#   app       → NestJS compilé via Dockerfile multi-stage
+#
+# Usage :
+#   1. Copier .env.example → .env et remplir les valeurs
+#   2. docker compose up --build
+#
+# Migrations (à lancer manuellement une première fois) :
+#   docker compose exec app npx prisma migrate deploy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-secrets_manager}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-secrets_manager}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      # Pointe sur le service postgres local (pas Neon)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-secrets_manager}
+      # Secrets obligatoires — :? provoque une erreur explicite si non définis
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required — set it in .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      PORT: 3000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

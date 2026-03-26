@@ -1,0 +1,27 @@
+# Dépendances — reconstruites dans le stage deps
+node_modules
+
+# Build précédent — le stage build recompile depuis les sources
+dist
+
+# Secrets — ne doivent JAMAIS entrer dans un layer Docker
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# Outils de dev uniquement
+.husky
+coverage
+*.log
+npm-debug.log*
+
+# Documentation
+README.md
+CLAUDE.md
+
+# Le docker-compose lui-même n'est pas nécessaire dans l'image
+docker

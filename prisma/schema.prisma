@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email     String   @unique @db.VarChar(255)
+  password  String   @db.VarChar(255)
+  role      String   @default("viewer") @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  secrets   Secret[]
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model Secret {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String    @db.VarChar(255)
+  value     String    @db.Text
+  iv        String    @db.VarChar(255)
+  createdBy String?   @map("created_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at")
+  expiresAt DateTime? @map("expires_at")
+
+  user      User?      @relation(fields: [createdBy], references: [id])
+  auditLogs AuditLog[]
+
+  @@map("secrets")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  secretId  String?  @map("secret_id") @db.Uuid
+  action    String   @db.VarChar(50)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User?   @relation(fields: [userId], references: [id])
+  secret Secret? @relation(fields: [secretId], references: [id])
+
+  @@map("audit_logs")
+}
