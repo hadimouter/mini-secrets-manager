@@ -357,7 +357,7 @@ Building this project taught me that security and development are not separate c
 
 The current infrastructure (ECR, EC2 staging + prod, security groups, IAM roles) was provisioned manually via the AWS CLI. The next step is to replace this with **Terraform** — a `terraform apply` should be able to recreate the entire infrastructure from scratch with no manual intervention.
 
-This is the most visible gap for a senior DevOps/DevSecOps reviewer: without IaC, infrastructure state lives in the AWS console, not in version control.
+Without IaC, infrastructure state lives in the AWS console, not in version control.
 
 ---
 
