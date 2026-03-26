@@ -128,12 +128,14 @@ export class SecretsService {
       throw new NotFoundException('Secret not found');
     }
 
-    // Transaction atomique : suppression + audit log
+    // Transaction atomique : audit log EN PREMIER, puis suppression
+    // L'audit log doit être créé avant le delete — sinon la FK audit_logs.secret_id
+    // est cassée par ON DELETE SET NULL avant qu'on puisse insérer le log DELETE
     await this.prisma.$transaction(async (tx) => {
-      await tx.secret.delete({ where: { id } });
       await tx.auditLog.create({
         data: { userId, secretId: id, action: 'DELETE', ipAddress },
       });
+      await tx.secret.delete({ where: { id } });
     });
 
     this.metrics.secretsDeleted.inc();
