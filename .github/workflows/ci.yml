@@ -56,9 +56,9 @@ jobs:
         with:
           path: ./
           # base vide sur premier push (0000...000) → Trufflehog scanne HEAD uniquement
+          # --fail est appliqué automatiquement par l'action (flag 'cannot be repeated' si doublon)
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
           head: ${{ github.sha }}
-          extra_args: --fail
 
   # ───────────────────────────────────────────────────────────────────────────
   # SCA — Snyk : vulnérabilités dans les dépendances npm
@@ -102,6 +102,9 @@ jobs:
 
       - name: Install dependencies
         run: HUSKY=0 npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
 
       - name: Run unit tests
         run: npm test -- --no-coverage
