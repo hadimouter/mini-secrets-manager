@@ -1,7 +1,11 @@
 import { Module } from '@nestjs/common';
-import { MonitoringService } from './monitoring.service';
+import { HttpMetricsInterceptor } from './http-metrics.interceptor';
+import { MetricsController } from './metrics.controller';
+import { MetricsService } from './metrics.service';
 
 @Module({
-  providers: [MonitoringService],
+  controllers: [MetricsController],
+  providers: [MetricsService, HttpMetricsInterceptor],
+  exports: [MetricsService, HttpMetricsInterceptor],
 })
 export class MonitoringModule {}

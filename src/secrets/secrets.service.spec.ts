@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { MetricsService } from '../monitoring/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSecretDto } from './dto/create-secret.dto';
 import { SecretRecord, SecretsRepository } from './secrets.repository';
@@ -71,6 +72,14 @@ describe('SecretsService', () => {
         {
           provide: AuditService,
           useValue: { log: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: MetricsService,
+          useValue: {
+            secretsCreated: { inc: jest.fn() },
+            secretsRead: { inc: jest.fn() },
+            secretsDeleted: { inc: jest.fn() },
+          },
         },
         {
           provide: PrismaService,

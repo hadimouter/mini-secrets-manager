@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+import { HttpMetricsInterceptor } from './monitoring/http-metrics.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -21,6 +22,10 @@ async function bootstrap() {
 
   // Filtre global — masque les erreurs Prisma et internes du client
   app.useGlobalFilters(new GlobalExceptionFilter());
+
+  // Interceptor global — mesure la durée de chaque requête HTTP
+  const httpMetrics = app.get(HttpMetricsInterceptor);
+  app.useGlobalInterceptors(httpMetrics);
 
   // Swagger/OpenAPI
   const swaggerConfig = new DocumentBuilder()

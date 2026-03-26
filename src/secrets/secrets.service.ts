@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { MetricsService } from '../monitoring/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSecretDto } from './dto/create-secret.dto';
 import { CreateSecretResponseDto } from './dto/create-secret-response.dto';
@@ -18,6 +19,7 @@ export class SecretsService {
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
+    private readonly metrics: MetricsService,
   ) {}
 
   async create(
@@ -59,6 +61,7 @@ export class SecretsService {
       return created;
     });
 
+    this.metrics.secretsCreated.inc();
     return this.toCreateResponseDto(record);
   }
 
@@ -98,6 +101,7 @@ export class SecretsService {
     const decryptedValue = this.crypto.decrypt(record.value, record.iv);
 
     await this.audit.log({ userId, secretId: id, action: 'READ', ipAddress });
+    this.metrics.secretsRead.inc();
 
     return this.toResponseDto(record, decryptedValue);
   }
@@ -131,6 +135,8 @@ export class SecretsService {
         data: { userId, secretId: id, action: 'DELETE', ipAddress },
       });
     });
+
+    this.metrics.secretsDeleted.inc();
   }
 
   private toCreateResponseDto(record: {
