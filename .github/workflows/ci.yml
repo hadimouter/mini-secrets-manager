@@ -242,7 +242,8 @@ jobs:
 
   # ───────────────────────────────────────────────────────────────────────────
   # Deploy Staging (EC2)
-  # Les secrets applicatifs sont injectés via GitHub Secrets — jamais dans le code.
+  # Les migrations tournent sur le runner CI (accès à prisma.config.ts + toutes les deps).
+  # Le container Docker reste minimal — responsabilité unique : faire tourner l'app.
   # `docker stop || true` : toléré ici car c'est un "stop si existant", pas un scan.
   # ───────────────────────────────────────────────────────────────────────────
   deploy-staging:
@@ -251,6 +252,21 @@ jobs:
     needs: push-ecr
     environment: staging
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: HUSKY=0 npm ci
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -269,27 +285,19 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
-            export JWT_SECRET="${{ secrets.JWT_SECRET }}"
-            export ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}"
-            export METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}"
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
               docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
             docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
-            docker run --rm \
-              --env DATABASE_URL \
-              ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
-              npx prisma migrate deploy
             docker stop mini-secrets-manager || true
             docker rm   mini-secrets-manager || true
             docker run -d \
               --name mini-secrets-manager \
               --restart unless-stopped \
               -p 3000:3000 \
-              --env DATABASE_URL \
-              --env JWT_SECRET \
-              --env ENCRYPTION_KEY \
-              --env METRICS_TOKEN \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+              -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+              -e METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}" \
               -e JWT_EXPIRES_IN="15m" \
               -e NODE_ENV="production" \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
@@ -325,6 +333,21 @@ jobs:
     needs: [dast, push-ecr]
     environment: production
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: HUSKY=0 npm ci
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -343,27 +366,19 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
-            export JWT_SECRET="${{ secrets.JWT_SECRET }}"
-            export ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}"
-            export METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}"
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
               docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
             docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
-            docker run --rm \
-              --env DATABASE_URL \
-              ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
-              npx prisma migrate deploy
             docker stop mini-secrets-manager || true
             docker rm   mini-secrets-manager || true
             docker run -d \
               --name mini-secrets-manager \
               --restart unless-stopped \
               -p 3000:3000 \
-              --env DATABASE_URL \
-              --env JWT_SECRET \
-              --env ENCRYPTION_KEY \
-              --env METRICS_TOKEN \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+              -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+              -e METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}" \
               -e JWT_EXPIRES_IN="15m" \
               -e NODE_ENV="production" \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
