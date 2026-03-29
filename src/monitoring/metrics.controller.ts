@@ -1,14 +1,15 @@
-import { Controller, Get, Header, Res } from '@nestjs/common';
+import { Controller, Get, Header, Res, UseGuards } from '@nestjs/common';
 import { ApiExcludeEndpoint } from '@nestjs/swagger';
 import type { Response } from 'express';
+import { MetricsAuthGuard } from './metrics-auth.guard';
 import { MetricsService } from './metrics.service';
 
 @Controller('metrics')
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
 
-  // Endpoint réservé au scraping Prometheus — pas de JWT, accès restreint par réseau
   @Get()
+  @UseGuards(MetricsAuthGuard)
   @Header('Cache-Control', 'no-store')
   @ApiExcludeEndpoint()
   async getMetrics(@Res() res: Response): Promise<void> {
