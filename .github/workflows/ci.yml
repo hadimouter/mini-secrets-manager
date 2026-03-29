@@ -269,11 +269,15 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
+            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
+            export JWT_SECRET="${{ secrets.JWT_SECRET }}"
+            export ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}"
+            export METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}"
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
               docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
             docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
             docker run --rm \
-              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              --env DATABASE_URL \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
               npx prisma migrate deploy
             docker stop mini-secrets-manager || true
@@ -282,10 +286,10 @@ jobs:
               --name mini-secrets-manager \
               --restart unless-stopped \
               -p 3000:3000 \
-              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-              -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
-              -e METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}" \
+              --env DATABASE_URL \
+              --env JWT_SECRET \
+              --env ENCRYPTION_KEY \
+              --env METRICS_TOKEN \
               -e JWT_EXPIRES_IN="15m" \
               -e NODE_ENV="production" \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
@@ -339,11 +343,15 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
+            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
+            export JWT_SECRET="${{ secrets.JWT_SECRET }}"
+            export ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}"
+            export METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}"
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
               docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
             docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
             docker run --rm \
-              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              --env DATABASE_URL \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
               npx prisma migrate deploy
             docker stop mini-secrets-manager || true
@@ -352,10 +360,10 @@ jobs:
               --name mini-secrets-manager \
               --restart unless-stopped \
               -p 3000:3000 \
-              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-              -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-              -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
-              -e METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}" \
+              --env DATABASE_URL \
+              --env JWT_SECRET \
+              --env ENCRYPTION_KEY \
+              --env METRICS_TOKEN \
               -e JWT_EXPIRES_IN="15m" \
               -e NODE_ENV="production" \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
