@@ -60,6 +60,9 @@ jobs:
           # --fail est appliqué automatiquement par l'action (flag 'cannot be repeated' si doublon)
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
           head: ${{ github.sha }}
+          # --only-verified : bloque uniquement sur les credentials vérifiés (connexion réelle confirmée)
+          # Évite les faux positifs sur les URLs de test (postgresql://test:test@localhost)
+          extra_args: --only-verified
 
   # ───────────────────────────────────────────────────────────────────────────
   # SCA — Snyk : vulnérabilités dans les dépendances npm
@@ -111,6 +114,60 @@ jobs:
         run: npm test -- --no-coverage
 
   # ───────────────────────────────────────────────────────────────────────────
+  # Tests E2E — Jest + Supertest contre une base PostgreSQL isolée
+  # Service container PostgreSQL provisionné par GitHub Actions.
+  # Les migrations sont appliquées avant les tests pour garantir un schéma propre.
+  # ───────────────────────────────────────────────────────────────────────────
+  test-e2e:
+    name: Tests E2E (Jest)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: secrets_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: HUSKY=0 npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/secrets_test
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/secrets_test
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/secrets_test
+          JWT_SECRET: ${{ secrets.E2E_JWT_SECRET }}
+          ENCRYPTION_KEY: ${{ secrets.E2E_ENCRYPTION_KEY }}
+          METRICS_TOKEN: ${{ secrets.E2E_METRICS_TOKEN }}
+          JWT_EXPIRES_IN: 15m
+          NODE_ENV: test
+
+  # ───────────────────────────────────────────────────────────────────────────
   # Build Docker + Container Scan — Trivy
   # Ce job ne démarre qu'après que TOUS les jobs précédents passent.
   # --exit-code 1 --severity CRITICAL : bloque sur CVE critique dans l'image.
@@ -119,7 +176,7 @@ jobs:
   docker-build-scan:
     name: Docker Build + Trivy Scan
     runs-on: ubuntu-latest
-    needs: [sast, secrets-scan, sca, test]
+    needs: [sast, secrets-scan, sca, test, test-e2e]
     steps:
       - uses: actions/checkout@v4
 
@@ -211,9 +268,14 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
               docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
             docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            docker run --rm \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
+              npx prisma migrate deploy
             docker stop mini-secrets-manager || true
             docker rm   mini-secrets-manager || true
             docker run -d \
@@ -223,6 +285,7 @@ jobs:
               -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
               -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
               -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+              -e METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}" \
               -e JWT_EXPIRES_IN="15m" \
               -e NODE_ENV="production" \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
@@ -275,9 +338,14 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
             aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
               docker login --username AWS --password-stdin ${{ needs.push-ecr.outputs.registry }}
             docker pull ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+            docker run --rm \
+              -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+              ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }} \
+              npx prisma migrate deploy
             docker stop mini-secrets-manager || true
             docker rm   mini-secrets-manager || true
             docker run -d \
@@ -287,6 +355,7 @@ jobs:
               -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
               -e JWT_SECRET="${{ secrets.JWT_SECRET }}" \
               -e ENCRYPTION_KEY="${{ secrets.ENCRYPTION_KEY }}" \
+              -e METRICS_TOKEN="${{ secrets.METRICS_TOKEN }}" \
               -e JWT_EXPIRES_IN="15m" \
               -e NODE_ENV="production" \
               ${{ needs.push-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}

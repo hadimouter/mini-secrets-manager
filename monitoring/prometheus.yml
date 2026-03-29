@@ -6,3 +6,5 @@ scrape_configs:
     static_configs:
       - targets: ['app:3000']
     metrics_path: /metrics
+    authorization:
+      credentials: ${METRICS_TOKEN}

@@ -33,12 +33,13 @@ Code Push
   → SAST           (Semgrep)       — detects vulnerabilities at the code level
   → Secrets Scan   (Trufflehog)    — detects hardcoded secrets in git history
   → SCA            (Snyk)          — detects CVEs in npm dependencies
+  → Tests          (Jest)          — 31 unit tests against isolated logic
+  → Tests E2E      (Jest)          — 19 tests against a real isolated database
   → Build          (Docker)        — multi-stage, non-root, minimal attack surface
   → Container Scan (Trivy)         — detects CVEs in the Docker image
-  → Tests          (Jest)          — 31 unit tests + 19 E2E tests against a real database
-  → Deploy Staging (AWS EC2)
+  → Deploy Staging (AWS EC2)       — migrations applied before container starts
   → DAST           (OWASP ZAP)     — 146 security checks against the live API
-  → Deploy Prod    (AWS EC2)
+  → Deploy Prod    (AWS EC2)       — migrations applied before container starts
 ```
 
 **Real incidents caught by the pipeline:**
@@ -180,6 +181,7 @@ The Grafana dashboard and alert rules are provisioned automatically — no manua
 | `DATABASE_URL` | ✅ | `postgresql://user:pass@host/db` | PostgreSQL connection string |
 | `JWT_SECRET` | ✅ | Any string (min 32 chars recommended) | Signing key for JWT tokens |
 | `ENCRYPTION_KEY` | ✅ | 64 hex characters (32 bytes) | AES-256-GCM encryption key |
+| `METRICS_TOKEN` | ✅ | 64 hex characters recommended | Bearer token required to scrape `/metrics` |
 | `JWT_EXPIRES_IN` | — | Duration string (default: `15m`) | JWT token lifetime |
 | `PORT` | — | Integer (default: `3000`) | HTTP port |
 | `NODE_ENV` | — | `development` \| `production` | Runtime environment |
@@ -277,7 +279,7 @@ Full interactive documentation available at `http://localhost:3000/api` (Swagger
 | `DELETE` | `/secrets/:id` | JWT | Delete a secret |
 | `GET` | `/audit` | JWT (admin) | List audit logs (paginated, 50/page) |
 | `GET` | `/health` | — | Health check |
-| `GET` | `/metrics` | — | Prometheus metrics scrape endpoint |
+| `GET` | `/metrics` | Bearer `METRICS_TOKEN` | Prometheus metrics scrape endpoint |
 
 **Access control:**
 - `viewer` — can create, read, and delete their own secrets
@@ -291,7 +293,7 @@ Full interactive documentation available at `http://localhost:3000/api` (Swagger
 
 Grafana is fully provisioned on startup — datasource, dashboard, and alert rules require no manual configuration.
 
-**Metrics exposed at `/metrics`:**
+**Metrics exposed at `/metrics` (requires `Authorization: Bearer <METRICS_TOKEN>`):**
 
 | Metric | Type | Description |
 |---|---|---|
@@ -326,16 +328,11 @@ Key rotation requires a migration script that:
 
 This is a known operational constraint of symmetric encryption at rest.
 
-### First deployment
+### Database migrations
 
-On a fresh EC2 instance, run the database migration before starting the container:
+Migrations run automatically on every deployment — before the container starts in both staging and prod. If `prisma migrate deploy` fails, the script exits (`set -e`) and the running container is left untouched.
 
-```bash
-docker run --rm \
-  -e DATABASE_URL="..." \
-  <image> \
-  npx prisma migrate deploy
-```
+On a fresh EC2 instance with no prior container, the same automatic step applies. No manual intervention required.
 
 ---
 
@@ -355,9 +352,11 @@ Building this project taught me that security and development are not separate c
 
 ## What's Next
 
-The current infrastructure (ECR, EC2 staging + prod, security groups, IAM roles) was provisioned manually via the AWS CLI. The next step is to replace this with **Terraform** — a `terraform apply` should be able to recreate the entire infrastructure from scratch with no manual intervention.
+**Terraform**
+The current infrastructure (ECR, EC2 staging + prod, security groups, IAM roles) was provisioned manually via the AWS CLI. The next step is to replace this with Terraform — a `terraform apply` should be able to recreate the entire infrastructure from scratch with no manual intervention. Without IaC, infrastructure state lives in the AWS console, not in version control.
 
-Without IaC, infrastructure state lives in the AWS console, not in version control.
+**AWS Secrets Manager**
+Application secrets (JWT_SECRET, ENCRYPTION_KEY, DATABASE_URL) are currently injected via GitHub Secrets. In a production environment, the right approach is AWS Secrets Manager — automatic rotation, fine-grained IAM access per service, and a full audit trail of every secret access. GitHub Secrets is sufficient for this project scope but does not scale to a multi-service architecture.
 
 ---
 
