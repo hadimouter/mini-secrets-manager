@@ -60,6 +60,9 @@ jobs:
           # --fail est appliqué automatiquement par l'action (flag 'cannot be repeated' si doublon)
           base: ${{ github.event.before != '0000000000000000000000000000000000000000' && github.event.before || '' }}
           head: ${{ github.sha }}
+          # --only-verified : bloque uniquement sur les credentials vérifiés (connexion réelle confirmée)
+          # Évite les faux positifs sur les URLs de test (postgresql://test:test@localhost)
+          extra_args: --only-verified
 
   # ───────────────────────────────────────────────────────────────────────────
   # SCA — Snyk : vulnérabilités dans les dépendances npm
